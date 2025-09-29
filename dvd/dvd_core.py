@@ -4,13 +4,18 @@ from typing import Annotated as A
 from typing import Literal as L
 
 import dvd.config as config
-from dvd.build_database import (clip_search_tool, frame_inspect_tool,
-                                global_browse_tool, init_single_video_db)
+from dvd.build_database import (
+    clip_search_tool,
+    frame_inspect_tool,
+    global_browse_tool,
+    init_single_video_db,
+)
 from dvd.func_call_shema import as_json_schema
 from dvd.func_call_shema import doc as D
 from dvd.utils import call_openai_model_with_tools
 
 TOPK = 16
+
 
 class StopException(Exception):
     """
@@ -33,7 +38,9 @@ class DVDCoreAgent:
             {"function": as_json_schema(func), "type": "function"}
             for func in self.name_to_function_map.values()
         ]
-        self.video_db = init_single_video_db(video_caption_path, video_db_path, config.AOAI_EMBEDDING_LARGE_DIM)
+        self.video_db = init_single_video_db(
+            video_caption_path, video_db_path, config.AOAI_EMBEDDING_LARGE_DIM
+        )
         self.max_iterations = max_iterations
         self.messages = self._construct_messages()
 
@@ -46,7 +53,7 @@ class DVDCoreAgent:
   • ACTION   Call exactly one function that moves you closer to the final answer.
   • OBSERVATION Summarize the function's output.
 You MUST plan extensively before each function call, and reflect extensively on the outcomes of the previous function calls.
-Only pass arguments that come verbatim from the user or from earlier function outputs—never invent them. Continue the loop until the user's query is fully resolved, then end your turn with the final answer. If you are uncertain about code structure or video content, use the available tools to inspect rather than guessing. Plan carefully before each call and reflect on every result. Do not rely solely on blind function calls, as this degrades reasoning quality. Timestamps may be formatted as 'HH:MM:SS' or 'MM:SS'."""
+Only pass arguments that come verbatim from the user or from earlier function outputs—never invent them. Continue the loop until the user's query is fully resolved, then end your turn with the final answer. If you are uncertain about code structure or video content, use the available tools to inspect rather than guessing. Plan carefully before each call and reflect on every result. Do not rely solely on blind function calls, as this degrades reasoning quality. Timestamps may be formatted as 'HH:MM:SS' or 'MM:SS'.""",
             },
             {
                 "role": "user",
@@ -67,11 +74,13 @@ Based on your observations and tool outputs, provide a concise answer that direc
 
 Total video length: VIDEO_LENGTH seconds.
 
-Question: QUESTION_PLACEHOLDER"""
+Question: QUESTION_PLACEHOLDER""",
             },
         ]
-        video_length = self.video_db.get_additional_data()['video_length']
-        messages[-1]['content'] = messages[-1]['content'].replace("VIDEO_LENGTH", str(video_length))
+        video_length = self.video_db.get_additional_data()["video_length"]
+        messages[-1]["content"] = messages[-1]["content"].replace(
+            "VIDEO_LENGTH", str(video_length)
+        )
         return messages
 
     # ------------------------------------------------------------------ #
@@ -90,7 +99,9 @@ Question: QUESTION_PLACEHOLDER"""
     def _exec_tool(self, tool_call, msgs):
         name = tool_call["function"]["name"]
         if name not in self.name_to_function_map:
-            self._append_tool_msg(tool_call["id"], name, f"Invalid function name: {name!r}", msgs)
+            self._append_tool_msg(
+                tool_call["id"], name, f"Invalid function name: {name!r}", msgs
+            )
             return
 
         # Parse arguments
@@ -101,7 +112,7 @@ Question: QUESTION_PLACEHOLDER"""
 
         if "database" in args:
             args["database"] = self.video_db
-        
+
         if "topk" in args:
             if config.OVERWRITE_CLIP_SEARCH_TOPK > 0:
                 args["topk"] = config.OVERWRITE_CLIP_SEARCH_TOPK
@@ -123,7 +134,9 @@ Question: QUESTION_PLACEHOLDER"""
         Run the ReAct-style loop with OpenAI Function Calling.
         """
         msgs = copy.deepcopy(self.messages)
-        msgs[-1]["content"] = msgs[-1]["content"].replace("QUESTION_PLACEHOLDER", question)
+        msgs[-1]["content"] = msgs[-1]["content"].replace(
+            "QUESTION_PLACEHOLDER", question
+        )
 
         for i in range(self.max_iterations):
             # Force a final `finish` on the last iteration to avoid hanging
@@ -137,11 +150,11 @@ Question: QUESTION_PLACEHOLDER"""
 
             response = call_openai_model_with_tools(
                 msgs,
-                endpoints=config.AOAI_ORCHESTRATOR_LLM_ENDPOINT_LIST,
+                aws_region=config.AWS_REGION,
                 model_name=config.AOAI_ORCHESTRATOR_LLM_MODEL_NAME,
                 tools=self.function_schemas,
                 temperature=0.0,
-                api_key=config.OPENAI_API_KEY,
+                aws_profile=config.AWS_PROFILE,
             )
             if response is None:
                 return None
@@ -163,12 +176,14 @@ Question: QUESTION_PLACEHOLDER"""
     # ------------------------------------------------------------------ #
     def stream_run(self, question):
         """
-        A generator version of `run`.  
+        A generator version of `run`.
         Yields:
             dict: every assistant / tool message produced during reasoning.
         """
         msgs = copy.deepcopy(self.messages)
-        msgs[-1]["content"] = msgs[-1]["content"].replace("QUESTION_PLACEHOLDER", question)
+        msgs[-1]["content"] = msgs[-1]["content"].replace(
+            "QUESTION_PLACEHOLDER", question
+        )
 
         for i in range(self.max_iterations):
             # Force a final `finish` on the last iteration
@@ -182,11 +197,11 @@ Question: QUESTION_PLACEHOLDER"""
 
             response = call_openai_model_with_tools(
                 msgs,
-                endpoints=config.AOAI_ORCHESTRATOR_LLM_ENDPOINT_LIST,
+                aws_region=config.AWS_REGION,
                 model_name=config.AOAI_ORCHESTRATOR_LLM_MODEL_NAME,
                 tools=self.function_schemas,
                 temperature=0.0,
-                api_key=config.OPENAI_API_KEY,
+                aws_profile=config.AWS_PROFILE,
             )
             if response is None:
                 return
@@ -204,9 +219,9 @@ Question: QUESTION_PLACEHOLDER"""
                     yield {
                         "role": "tool_call",
                         "name": tool_name,
-                        "arguments": tool_args
+                        "arguments": tool_args,
                     }
-                    
+
                     self._exec_tool(tool_call, msgs)
                     # Only yield the tool result message
                     if msgs[-1].get("role") == "tool":
@@ -230,14 +245,16 @@ def main():
 (B) White
 (C) Black
 (D) Yellow"""
-    
+
     agent = DVDCoreAgent(video_db_path, video_caption_path, max_iterations=15)
     messages = agent.run(question)
 
     if messages:
         for m in messages:
-            import pdb; pdb.set_trace()
-            if m.get('role') == 'assistant':
+            import pdb
+
+            pdb.set_trace()
+            if m.get("role") == "assistant":
                 print(m)
 
 

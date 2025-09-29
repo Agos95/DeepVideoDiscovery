@@ -13,9 +13,24 @@ from dvd.utils import AzureOpenAIEmbeddingService, call_openai_model_with_tools
 
 
 def frame_inspect_tool(
-    database: A[NanoVectorDB, D("The database containing video metadata. Must be an instance of NanoVectorDB.")], 
-    question: A[str, D("The specific detailed question to ask about the video content during the specified time ranges. No need to add time ranges in the question.")], 
-    time_ranges_hhmmss: A[list[tuple], D("A list of tuples containing start and end times in HH:MM:SS format. If the time range is longer than 50 seconds, the function samples 50 evenly distributed frames.  Otherwise, it uses all frames within the specified range.")], 
+    database: A[
+        NanoVectorDB,
+        D(
+            "The database containing video metadata. Must be an instance of NanoVectorDB."
+        ),
+    ],
+    question: A[
+        str,
+        D(
+            "The specific detailed question to ask about the video content during the specified time ranges. No need to add time ranges in the question."
+        ),
+    ],
+    time_ranges_hhmmss: A[
+        list[tuple],
+        D(
+            "A list of tuples containing start and end times in HH:MM:SS format. If the time range is longer than 50 seconds, the function samples 50 evenly distributed frames.  Otherwise, it uses all frames within the specified range."
+        ),
+    ],
 ) -> str:
     """
     Crop the video frames based on the time ranges and ask the model a detailed question about the cropped video clips.
@@ -24,44 +39,47 @@ def frame_inspect_tool(
              returns an error message: "Error: Cannot find corresponding result in the given time range."
     """
 
-    assert isinstance(database, NanoVectorDB), "Database must be an instance of NanoVectorDB"
-    video_length_secs = convert_hhmmss_to_seconds(database.get_additional_data()['video_length'])
+    assert isinstance(database, NanoVectorDB), (
+        "Database must be an instance of NanoVectorDB"
+    )
+    video_length_secs = convert_hhmmss_to_seconds(
+        database.get_additional_data()["video_length"]
+    )
     video_meta = database.get_additional_data()
-    video_file_root = video_meta['video_file_root']
-    fps = video_meta.get('fps', config.VIDEO_FPS)
+    video_file_root = video_meta["video_file_root"]
+    fps = video_meta.get("fps", config.VIDEO_FPS)
     time_ranges_secs = []
     for time_range in time_ranges_hhmmss:
         start_secs = convert_hhmmss_to_seconds(time_range[0])
         end_secs = convert_hhmmss_to_seconds(time_range[1])
         if start_secs > video_length_secs:
-            raise ValueError(f"One of start time {time_range[0]} exceeds video length {video_length_secs}")
+            raise ValueError(
+                f"One of start time {time_range[0]} exceeds video length {video_length_secs}"
+            )
         end_secs = min(end_secs, video_length_secs)
         time_ranges_secs.append((start_secs, end_secs))
 
     time_ranges_secs.sort(key=lambda x: x[0])  # Sort by start time
     # Calculate total time across all ranges
     total_time = sum(end - start for start, end in time_ranges_secs)
-    
+
     # Maximum number of timepoints to sample
     max_timepoints = config.AOAI_TOOL_VLM_MAX_FRAME_NUM
     timepoints = []
 
-    assert total_time > 0 and max_timepoints > 0 
+    assert total_time > 0 and max_timepoints > 0
 
     # ① Uniformly sample on the flattened timeline
     #    endpoint=False ensures the last sample point < total_time
     offsets = np.linspace(
-        0, total_time,
-        num=max_timepoints,
-        endpoint=False,
-        dtype=float
+        0, total_time, num=max_timepoints, endpoint=False, dtype=float
     )
 
     # ② Calculate prefix sums for each segment, used to map offsets back to actual timestamps
-    prefix_len = []          # (cumulative length, segment start, segment length)
+    prefix_len = []  # (cumulative length, segment start, segment length)
     acc = 0
     for start, end in time_ranges_secs:
-        seg_len   = end - start
+        seg_len = end - start
         prefix_len.append((acc, start, seg_len))
         acc += seg_len
 
@@ -69,11 +87,11 @@ def frame_inspect_tool(
     for off in offsets:
         # off = int(round(off))          # Ensure it is an integer
         for base, seg_start, seg_len in prefix_len:
-            if off < base + seg_len:   # Find the corresponding segment
+            if off < base + seg_len:  # Find the corresponding segment
                 timepoints.append(seg_start + (off - base))
                 break
     # ④ Convert the sampled timestamps (seconds) to frame indices according to VIDEO_FPS
-    max_frame_idx = int(video_length_secs * fps) - 1   # last valid frame index
+    max_frame_idx = int(video_length_secs * fps) - 1  # last valid frame index
 
     framepoints = [
         min(max(int(round(ts * fps)), 0), max_frame_idx)  # clamp to [0, max_frame_idx]
@@ -81,11 +99,10 @@ def frame_inspect_tool(
     ]
     framepoints = sorted(set(framepoints))[:max_timepoints]
 
-
     input_msgs = [
         {
             "role": "system",
-            "content": "You are a helpful assistant to answer questions."
+            "content": "You are a helpful assistant to answer questions.",
         },
         {
             "role": "user",
@@ -93,16 +110,17 @@ def frame_inspect_tool(
         },
     ]
 
-    input_msgs[1]['content'] = input_msgs[1]['content'].format(question=question)
+    input_msgs[1]["content"] = input_msgs[1]["content"].format(question=question)
 
     files = [
-        os.path.join(video_file_root, "frames", f"frame_n{fn:06d}.jpg") for fn in framepoints
+        os.path.join(video_file_root, "frames", f"frame_n{fn:06d}.jpg")
+        for fn in framepoints
     ]
     msgs = call_openai_model_with_tools(
         messages=input_msgs,
-        endpoints=config.AOAI_TOOL_VLM_ENDPOINT_LIST,
+        aws_region=config.AWS_REGION,
         model_name=config.AOAI_TOOL_VLM_MODEL_NAME,
-        api_key=config.OPENAI_API_KEY,
+        aws_profile=config.AWS_PROFILE,
         image_paths=files,
         temperature=0,
         max_tokens=512,
@@ -111,10 +129,16 @@ def frame_inspect_tool(
         raise ValueError("No response from the model")
     return msgs["content"]
 
+
 def clip_search_tool(
-        database: A[NanoVectorDB, D("The database object that supports querying with embeddings.")],
-        event_description: A[str, D("A textual description of the event to search for.")],
-        top_k: A[int, D("The maximum number of top results to retrieve. Just use the default value.")] = 16
+    database: A[
+        NanoVectorDB, D("The database object that supports querying with embeddings.")
+    ],
+    event_description: A[str, D("A textual description of the event to search for.")],
+    top_k: A[
+        int,
+        D("The maximum number of top results to retrieve. Just use the default value."),
+    ] = 16,
 ) -> str:
     """
     Searches for events in a video clip database based on a given event description and retrieves the top-k most relevant video clip captions.
@@ -126,20 +150,21 @@ def clip_search_tool(
         - This function utilizes the OpenAI Embedding Service to generate embeddings for the input text.
         - Use default values for `top_k` to limit the number of results returned.
     """
-    assert isinstance(database, NanoVectorDB), "Database must be an instance of NanoVectorDB"
+    assert isinstance(database, NanoVectorDB), (
+        "Database must be an instance of NanoVectorDB"
+    )
     query_emb = AzureOpenAIEmbeddingService.get_embeddings(
         endpoints=config.AOAI_EMBEDDING_RESOURCE_LIST,
         model_name=config.AOAI_EMBEDDING_LARGE_MODEL_NAME,
         input_text=[event_description],
-        api_key=config.OPENAI_API_KEY,
-    )[0]['embedding']
+        aws_profile=config.AWS_PROFILE,
+    )[0]["embedding"]
     results = database.query(
         query_emb,
         top_k=top_k,
     )
     captions = [
-        (data['time_start_secs'], data['caption'])
-        for i, data in enumerate(results)
+        (data["time_start_secs"], data["caption"]) for i, data in enumerate(results)
     ]
     captions = sorted(captions, key=lambda x: x[0])
     captions = "\n".join([cap[1] for cap in captions])
@@ -147,8 +172,15 @@ def clip_search_tool(
 
 
 def global_browse_tool(
-        database: A[NanoVectorDB, D("The database object that supports querying with embeddings.")],
-        query: A[str, D("A textual description which will be used to search for relevant video clips in the database.")],
+    database: A[
+        NanoVectorDB, D("The database object that supports querying with embeddings.")
+    ],
+    query: A[
+        str,
+        D(
+            "A textual description which will be used to search for relevant video clips in the database."
+        ),
+    ],
 ) -> str:
     """
     Analyzes a video database to answer a detailed question by first searching for relevant video clips and then generating a comprehensive answer based on their captions.
@@ -161,20 +193,21 @@ def global_browse_tool(
         str: A JSON string containing the subject registry and the model's answer to the query based on the most relevant video clips.
     """
     # search related clips
-    assert isinstance(database, NanoVectorDB), "Database must be an instance of NanoVectorDB"
+    assert isinstance(database, NanoVectorDB), (
+        "Database must be an instance of NanoVectorDB"
+    )
     query_emb = AzureOpenAIEmbeddingService.get_embeddings(
         endpoints=config.AOAI_EMBEDDING_RESOURCE_LIST,
         model_name=config.AOAI_EMBEDDING_LARGE_MODEL_NAME,
         input_text=[query],
-        api_key=config.OPENAI_API_KEY,
-    )[0]['embedding']
+        aws_profile=config.AWS_PROFILE,
+    )[0]["embedding"]
     results = database.query(
         query_emb,
         top_k=config.GLOBAL_BROWSE_TOPK,
     )
     captions = [
-        (data['time_start_secs'], data['caption'])
-        for i, data in enumerate(results)
+        (data["time_start_secs"], data["caption"]) for i, data in enumerate(results)
     ]
     captions = sorted(captions, key=lambda x: x[0])
     captions = "\n".join([cap[1] for cap in captions])
@@ -186,7 +219,7 @@ def global_browse_tool(
     input_msgs = [
         {
             "role": "system",
-            "content": "You are a knowledgeable assistant specializing in analyzing video content and providing detailed, insightful answers."
+            "content": "You are a knowledgeable assistant specializing in analyzing video content and providing detailed, insightful answers.",
         },
         {
             "role": "user",
@@ -199,21 +232,25 @@ def global_browse_tool(
         },
     ]
 
-    input_msgs[1]['content'] = input_msgs[1]['content'].format(question=query, clip_captions=clip_captions)
+    input_msgs[1]["content"] = input_msgs[1]["content"].format(
+        question=query, clip_captions=clip_captions
+    )
 
     msgs = call_openai_model_with_tools(
         messages=input_msgs,
-        endpoints=config.AOAI_TOOL_VLM_ENDPOINT_LIST,
+        aws_region=config.AWS_REGION,
         model_name=config.AOAI_TOOL_VLM_MODEL_NAME,
-        api_key=config.OPENAI_API_KEY,
+        aws_profile=config.AWS_PROFILE,
         temperature=0,
         max_tokens=512,
     )
     if msgs is None:
         raise ValueError("No response from the model")
 
-    subject_registry = database.get_additional_data()['subject_registry']
-    return json.dumps({'subject_registry': subject_registry, 'query_related_event': msgs["content"]})
+    subject_registry = database.get_additional_data()["subject_registry"]
+    return json.dumps(
+        {"subject_registry": subject_registry, "query_related_event": msgs["content"]}
+    )
 
 
 def convert_seconds_to_hhmmss(seconds):
@@ -223,8 +260,9 @@ def convert_seconds_to_hhmmss(seconds):
     seconds %= 60
     return f"{hours:02}:{minutes:02}:{seconds:02}"
 
+
 def convert_hhmmss_to_seconds(hhmmss):
-    hhmmss = hhmmss.split('.')[0]
+    hhmmss = hhmmss.split(".")[0]
     parts = hhmmss.split(":")
     if len(parts) < 2:
         raise ValueError("Invalid time format. Expected HH:MM:SS.")
@@ -233,15 +271,18 @@ def convert_hhmmss_to_seconds(hhmmss):
     hours, minutes, seconds = map(int, parts)
     return hours * 3600 + minutes * 60 + seconds
 
-def is_covered(d,N):
-    i=sorted((int(a),int(b))for a,b in(map(lambda x:x.split('_'),d)));c=0
-    return all(s==c and not (c:=e) for s,e in i) and c==N
+
+def is_covered(d, N):
+    i = sorted((int(a), int(b)) for a, b in (map(lambda x: x.split("_"), d)))
+    c = 0
+    return all(s == c and not (c := e) for s, e in i) and c == N
+
 
 def init_single_video_db(video_caption_json_path, output_video_db_path, emb_dim):
     vdb = NanoVectorDB(emb_dim, storage_file=output_video_db_path)
     # with open(video_caption_json_path, "r") as f:
     #     captions = json.load(f)
-    # subject_registry = captions.pop('subject_registry', captions.pop('character_registry', None))            
+    # subject_registry = captions.pop('subject_registry', captions.pop('character_registry', None))
     # video_length = max([float(k.split("_")[1]) for k in captions.keys()])
     # if not is_covered(captions.keys(), video_length):
     #     error_msg = (f"Fail to build video database for video {video_caption_json_path.split("/")[-3]}. Get None video clip captions for some clips in the video.")
@@ -261,49 +302,54 @@ def init_single_video_db(video_caption_json_path, output_video_db_path, emb_dim)
                     "__vector__": np.array(emb),
                     "time_start_secs": timestamp[0],
                     "time_end_secs": timestamp[1],
-                    "caption": prefix + cap['caption'],
+                    "caption": prefix + cap["caption"],
                 }
             )
         _ = vdb.upsert(data)
         with open(video_caption_json_path, "r") as f:
             captions = json.load(f)
-        subject_registry = captions.pop('subject_registry', captions.pop('character_registry', None))          
+        subject_registry = captions.pop(
+            "subject_registry", captions.pop("character_registry", None)
+        )
         video_length = max([float(k.split("_")[1]) for k in captions.keys()])
         video_length = convert_seconds_to_hhmmss(video_length)
         addtional_data = {
-            'subject_registry': subject_registry,
-            'video_length': video_length,
-            'video_file_root': os.path.dirname(os.path.dirname(video_caption_json_path)),
-            'fps': getattr(config, "VIDEO_FPS", 2),
+            "subject_registry": subject_registry,
+            "video_length": video_length,
+            "video_file_root": os.path.dirname(
+                os.path.dirname(video_caption_json_path)
+            ),
+            "fps": getattr(config, "VIDEO_FPS", 2),
         }
         vdb.store_additional_data(**addtional_data)
         vdb.save()
     return vdb
 
+
 def preprocess_captions(caption_json_path):
     with open(caption_json_path, "r") as f:
         captions = json.load(f)
     scripts = []
-    captions.pop('subject_registry', None)
-    captions.pop('character_registry', None)
+    captions.pop("subject_registry", None)
+    captions.pop("character_registry", None)
     for idx, (timestamp, cap_info) in enumerate(captions.items()):
-        if cap_info.get('caption') is None or len(cap_info['caption']) == 0:
+        if cap_info.get("caption") is None or len(cap_info["caption"]) == 0:
             print(f"Empty caption information for {timestamp} in {caption_json_path}")
             continue
-        elif isinstance(cap_info['caption'], list):
-            cap_info['caption'] = cap_info['caption'][0]
-        elif not isinstance(cap_info['caption'], str):
+        elif isinstance(cap_info["caption"], list):
+            cap_info["caption"] = cap_info["caption"][0]
+        elif not isinstance(cap_info["caption"], str):
             print(f"Invalid caption type for {cap_info['caption']}")
-            cap_info['caption'] = str(cap_info['caption'])
+            cap_info["caption"] = str(cap_info["caption"])
         timestamp = list(map(float, timestamp.split("_")))
-        scripts.append((timestamp, cap_info['caption'], cap_info))
+        scripts.append((timestamp, cap_info["caption"], cap_info))
 
     # batchify
     batch_size = 128
     batched_scripts = []
     print(f"Embedding {len(scripts)} captions...")
     for i in range(0, len(scripts), batch_size):
-        batch = scripts[i:i+batch_size]
+        batch = scripts[i : i + batch_size]
         batched_scripts.append(batch)
     cap2emb_list = []
     with multiprocessing.Pool(os.cpu_count() // 2) as pool:
@@ -316,13 +362,14 @@ def preprocess_captions(caption_json_path):
                 pbar.update(len(result))
     return cap2emb_list
 
+
 def single_batch_embedding_task(data):
     timestamps, captions, cap_infos = map(list, (zip(*data)))
     embs = AzureOpenAIEmbeddingService.get_embeddings(
         endpoints=config.AOAI_EMBEDDING_RESOURCE_LIST,
         model_name=config.AOAI_EMBEDDING_LARGE_MODEL_NAME,
         input_text=captions,
-        api_key=config.OPENAI_API_KEY,
+        aws_profile=config.AWS_PROFILE,
     )
     max_tries = 3
     while embs is None or len(embs) != len(captions):
@@ -334,12 +381,15 @@ def single_batch_embedding_task(data):
             endpoints=config.AOAI_EMBEDDING_RESOURCE_LIST,
             model_name=config.AOAI_EMBEDDING_LARGE_MODEL_NAME,
             input_text=captions,
-            api_key=config.OPENAI_API_KEY,
+            aws_profile=config.AWS_PROFILE,
         )
-    return list(zip(timestamps, cap_infos, [d['embedding'] for d in embs]))
+    return list(zip(timestamps, cap_infos, [d["embedding"] for d in embs]))
+
 
 if __name__ == "__main__":
-    benchmark_metadata_path = "/home/xiaoyizhang/event_prediction_model/LVBench/data/video_info.meta.jsonl"
+    benchmark_metadata_path = (
+        "/home/xiaoyizhang/event_prediction_model/LVBench/data/video_info.meta.jsonl"
+    )
     video_caption_folder = "/data/xiaoyizhang/LVBench/"
     output_folder_name = "audio_segment_w_transcribe_0411"
     video_db_folder = "./lvbench_vdb/"
@@ -350,4 +400,6 @@ if __name__ == "__main__":
         lines = f.readlines()
 
     video_caption_json_path = "/data/xiaoyizhang/LVBench/cXDT44zT8JY/audio_segment_w_transcribe_0411/captions.json"
-    video_db = init_single_video_db(video_caption_json_path, "./lvbench_vdb/tmp.json", embedding_dim)
+    video_db = init_single_video_db(
+        video_caption_json_path, "./lvbench_vdb/tmp.json", embedding_dim
+    )

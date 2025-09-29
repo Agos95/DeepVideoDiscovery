@@ -15,10 +15,7 @@ from dvd.utils import call_openai_model_with_tools
 # --------------------------------------------------------------------------- #
 
 messages = [
-    {
-        "role": "system",
-        "content": ""
-    },
+    {"role": "system", "content": ""},
     {
         "role": "user",
         "content": "",
@@ -65,6 +62,7 @@ Return *only* the merged `subject_registry` JSON object.
 
 SYSTEM_PROMPT = "You are a helpful assistant."
 
+
 # --------------------------------------------------------------------------- #
 #                               Helper utils                                  #
 # --------------------------------------------------------------------------- #
@@ -93,24 +91,29 @@ def gather_frames_from_time_ranges(
         }
     return result
 
+
 def gather_clip_frames(
     video_frame_folder, clip_secs: int, subtitle_file_path: str = None
 ) -> Dict[str, Dict]:
     # Fix possible typo in the earlier list-comprehension and gather frames again
     frame_files = sorted(
-        [f for f in os.listdir(video_frame_folder) if f.startswith("frame") and f.endswith(".jpg")],
+        [
+            f
+            for f in os.listdir(video_frame_folder)
+            if f.startswith("frame") and f.endswith(".jpg")
+        ],
         key=lambda x: float(x.split("_n")[-1].rstrip(".jpg")),
     )
     if not frame_files:
         return {}
 
     # Optional subtitle information
-    subtitle_map = (
-        parse_srt_to_dict(subtitle_file_path) if subtitle_file_path else {}
-    )
+    subtitle_map = parse_srt_to_dict(subtitle_file_path) if subtitle_file_path else {}
 
     # Map timestamps → file names for quick lookup
-    frame_ts = [float(f.split("_n")[-1].rstrip(".jpg")) / config.VIDEO_FPS for f in frame_files]
+    frame_ts = [
+        float(f.split("_n")[-1].rstrip(".jpg")) / config.VIDEO_FPS for f in frame_files
+    ]
     ts_to_file = dict(zip(frame_ts, frame_files))
     last_ts = int(max(frame_ts))
 
@@ -136,10 +139,12 @@ def gather_clip_frames(
                 transcript_parts.append(text)
         transcript = " ".join(transcript_parts).strip() or "No transcript."
 
-        result.append((
-                f"{clip_start}_{clip_end}", 
-                {"files": clip_files, "transcript": transcript}
-        ))
+        result.append(
+            (
+                f"{clip_start}_{clip_end}",
+                {"files": clip_files, "transcript": transcript},
+            )
+        )
 
         clip_start += clip_secs
     return result
@@ -214,10 +219,11 @@ def _caption_clip(task: Tuple[str, Dict], caption_ckpt_folder) -> Tuple[str, dic
 
     send_messages = copy.deepcopy(messages)
     send_messages[0]["content"] = SYSTEM_PROMPT
-    send_messages[1]["content"] = CAPTION_PROMPT.replace(
-        "TRANSCRIPT_PLACEHOLDER", transcript).replace(
-        "CLIP_START_TIME", clip_start_time).replace(
-        "CLIP_END_TIME", clip_end_time)
+    send_messages[1]["content"] = (
+        CAPTION_PROMPT.replace("TRANSCRIPT_PLACEHOLDER", transcript)
+        .replace("CLIP_START_TIME", clip_start_time)
+        .replace("CLIP_END_TIME", clip_end_time)
+    )
 
     if os.path.exists(os.path.join(caption_ckpt_folder, f"{timestamp}.json")):
         # If the caption already exists, skip processing
@@ -229,18 +235,22 @@ def _caption_clip(task: Tuple[str, Dict], caption_ckpt_folder) -> Tuple[str, dic
         tries -= 1
         resp = call_openai_model_with_tools(
             send_messages,
-            endpoints=config.AOAI_CAPTION_VLM_ENDPOINT_LIST,
+            aws_region=config.AWS_REGION,
             model_name=config.AOAI_CAPTION_VLM_MODEL_NAME,
             return_json=True,
             image_paths=files,
-            api_key=config.OPENAI_API_KEY,
+            aws_profile=config.AWS_PROFILE,
         )["content"]
         if resp is None:
             continue
         try:
-            assert isinstance(resp, str), f"Response must be a JSON string instead of {type(resp)}:{resp}."
+            assert isinstance(resp, str), (
+                f"Response must be a JSON string instead of {type(resp)}:{resp}."
+            )
             parsed = json.loads(resp)
-            parsed["clip_description"] += f"\n\nTranscript during this video clip: {transcript}." # add transcript to description
+            parsed["clip_description"] += (
+                f"\n\nTranscript during this video clip: {transcript}."  # add transcript to description
+            )
             resp = json.dumps(parsed)
             with open(os.path.join(caption_ckpt_folder, f"{timestamp}.json"), "w") as f:
                 f.write(resp)
@@ -269,10 +279,10 @@ def merge_subject_registries(registries: List[dict]) -> dict:
         tries -= 1
         resp = call_openai_model_with_tools(
             send_messages,
-            endpoints=config.AOAI_CAPTION_VLM_ENDPOINT_LIST,
+            aws_region=config.AWS_REGION,
             model_name=config.AOAI_CAPTION_VLM_MODEL_NAME,
             return_json=True,
-            api_key=config.OPENAI_API_KEY,
+            aws_profile=config.AWS_PROFILE,
         )["content"]
         if resp is None:
             continue
@@ -325,9 +335,7 @@ def process_video(
     merged_registry = merge_subject_registries(partial_registries)
     frame_captions["subject_registry"] = merged_registry
 
-    with open(
-        os.path.join(output_caption_folder, "captions.json"), "w"
-    ) as f:
+    with open(os.path.join(output_caption_folder, "captions.json"), "w") as f:
         json.dump(frame_captions, f, indent=4)
 
 
@@ -345,10 +353,9 @@ def process_video_lite(
             "caption": f"\n\nTranscript during this video clip: {text}.",
         }
     frame_captions["subject_registry"] = {}
-    with open(
-        os.path.join(output_caption_folder, "captions.json"), "w"
-    ) as f:
+    with open(os.path.join(output_caption_folder, "captions.json"), "w") as f:
         json.dump(frame_captions, f, indent=4)
+
 
 # --------------------------------------------------------------------------- #
 #                                    main                                     #
@@ -362,6 +369,7 @@ def main():
         output_caption_folder,
         subtitle_file_path=subtitle_file_path,
     )
+
 
 if __name__ == "__main__":
     main()
