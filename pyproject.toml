@@ -1,0 +1,21 @@
+[project]
+name = "deepvideodiscovery"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain-aws>=0.2.33",
+    "langchain-core>=0.3.76",
+    "nano-vectordb>=0.0.4.3",
+    "numpy>=2.3.3",
+    "opencv-python-headless>=4.11.0.86",
+    "requests>=2.32.5",
+    "tqdm>=4.67.1",
+    "yt-dlp>=2025.9.26",
+]
+
+[dependency-groups]
+dev = [
+    "gradio>=5.47.2",
+]
