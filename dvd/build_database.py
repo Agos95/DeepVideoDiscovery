@@ -158,7 +158,7 @@ def clip_search_tool(
         model_name=config.AOAI_EMBEDDING_LARGE_MODEL_NAME,
         input_text=[event_description],
         aws_profile=config.AWS_PROFILE,
-    )[0]["embedding"]
+    )[0]
     results = database.query(
         query_emb,
         top_k=top_k,
@@ -201,7 +201,7 @@ def global_browse_tool(
         model_name=config.AOAI_EMBEDDING_LARGE_MODEL_NAME,
         input_text=[query],
         aws_profile=config.AWS_PROFILE,
-    )[0]["embedding"]
+    )[0]
     results = database.query(
         query_emb,
         top_k=config.GLOBAL_BROWSE_TOPK,
@@ -383,7 +383,7 @@ def single_batch_embedding_task(data):
             input_text=captions,
             aws_profile=config.AWS_PROFILE,
         )
-    return list(zip(timestamps, cap_infos, [d["embedding"] for d in embs]))
+    return list(zip(timestamps, cap_infos, embs))
 
 
 if __name__ == "__main__":

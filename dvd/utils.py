@@ -167,7 +167,9 @@ def call_openai_model_with_tools(
 class AzureOpenAIEmbeddingService:
     @staticmethod
     @retry_with_exponential_backoff
-    def get_embeddings(aws_region, aws_profile, model_name, input_text):
+    def get_embeddings(
+        aws_region, aws_profile, model_name, input_text: str | list[str]
+    ) -> list[list[float]]:
         """
         Call Azure OpenAI Embedding service and get embeddings for the input text.
 
@@ -183,7 +185,9 @@ class AzureOpenAIEmbeddingService:
             model_id=model_name,
         )
 
-        emb = embeddings.embed_query(input_text)
+        if isinstance(input_text, str):
+            input_text = [input_text]
+        emb = embeddings.embed_documents(input_text)
 
         return emb
 
