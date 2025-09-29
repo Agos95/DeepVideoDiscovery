@@ -1,8 +1,8 @@
-numpy<2
-opencv-python-headless
-tqdm
-nano-vectordb
+# numpy<2
+# opencv-python-headless
+# tqdm
+# nano-vectordb
 # azure-identity
-requests
-yt-dlp
+# requests
+# yt-dlp
 # openai
